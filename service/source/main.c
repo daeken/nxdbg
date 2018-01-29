@@ -1,6 +1,5 @@
 // Copyright 2017 plutoo
 #include <switch.h>
-#include "kernelhax.h"
 
 Result usbCommsInitialize(void);
 size_t usbCommsRead(void* buffer, size_t size);
@@ -185,15 +184,15 @@ int handleUsbCommand() {
         QueryMemoryResp  resp_;
         usbCommsRead(&req_, sizeof(req_));
 
-        MemInfo info;
+        MemoryInfo info;
         u32 who_cares;
         rc = svcQueryDebugProcessMemory(&info, &who_cares, req_.DbgHandle, req_.Addr);
         resp.Result = rc;
 
         if (rc == 0) {
-            resp_.Addr = info.base_addr;
+            resp_.Addr = info.addr;
             resp_.Size = info.size;
-            resp_.Type = info.memorytype;
+            resp_.Type = info.type;
             resp_.Perm = info.perm;
 
             resp.LenBytes = sizeof(resp_);
@@ -358,16 +357,6 @@ int handleUsbCommand() {
 int main(int argc, char *argv[])
 {
     Result rc;
-
-    rc = kernelHaxInit();
-    if (rc)
-        // Kernel hax init fail.
-        fatalSimple(222 | (3 << 9));
-    u64 ignore;
-    rc = kernelHax(&ignore);
-    if (rc)
-        // Kernel hax fail.
-        fatalSimple(222 | (4 << 9));
 
     rc = pmdmntInitialize();
     if (rc)
