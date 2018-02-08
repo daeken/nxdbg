@@ -127,6 +127,10 @@ class BadSvcEvent(ExceptionEvent):
 	def __repr__(self):
 		return 'BadSvcEvent(tid=%i, svc=0x%x)' % (self.tid, self.svc)
 
+class ThreadContext(object):
+	def __init__(self, data):
+		self.registers = struct.unpack('<' + 'Q' * 33, data[:8 * 33])
+
 class Connection(object):
 	def __init__(self, ip, port):
 		self.sock = socket(AF_INET, SOCK_STREAM)
@@ -182,7 +186,10 @@ class Connection(object):
 		self.sr(6, 'IIQ', handle, flags, tid)
 
 	def getThreadContext(self, handle, flags, tid):
-		return self.sr(7, 'IIQ', handle, flags, tid)
+		try:
+			return ThreadContext(self.sr(7, 'IIQ', handle, flags, tid))
+		except SwitchException:
+			return None
 
 	def breakProcess(self, handle):
 		self.sr(8, 'I', handle)

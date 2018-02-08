@@ -15,6 +15,7 @@ class Clidbg(Cmd):
 		Cmd.__init__(self)
 
 		self.lastEvent = None
+		self.context = None
 		self.dbg = Connection(ip, port)
 
 	def print_topics(self, header, cmds, cmdlen, maxcol):
@@ -70,6 +71,24 @@ class Clidbg(Cmd):
 		print line
 		sys.exit()
 
+	def do_registers(self, line):
+		if self.context is None:
+			print 'No active thread context'
+			return
+		for i in xrange(33):
+			if i == 31:
+				reg = 'SP'
+			elif i == 32:
+				reg = 'PC'
+			else:
+				reg = 'X%i' % i
+			reg += ' ' if len(reg) == 2 else ''
+			print '%s %016x   ' % (reg, self.context.registers[i]), 
+			if i & 1:
+				print
+		if i & 1 == 0:
+			print
+
 	def dbgone(self):
 		while True:
 			try:
@@ -79,6 +98,10 @@ class Clidbg(Cmd):
 				pass
 			time.sleep(0.1)
 		print evt
+		if evt.tid != 0:
+			self.context = self.dbg.getThreadContext(self.phandle, 15, evt.tid)
+		else:
+			self.context = None
 		self.lastEvent = evt
 
 def main():
