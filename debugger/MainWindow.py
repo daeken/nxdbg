@@ -151,7 +151,7 @@ def main(argv):
         dbg_handle = usb.cmdAttachProcess(pid)
 
     if argv[1] == '--titleid':
-        titleid = int(argv[2], 0)
+        titleid = int(argv[2], 16)
         pid = usb.cmdGetTitlePid(titleid)
         dbg_handle = usb.cmdAttachProcess(pid)
 

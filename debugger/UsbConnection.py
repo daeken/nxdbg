@@ -1,5 +1,11 @@
 # Copyright 2017 plutoo
-import usb
+
+USE_USB = False
+
+if USE_USB:
+    import usb
+else:
+    from socket import *
 import sys
 import struct
 import threading
@@ -28,6 +34,9 @@ class DebugEvent:
             return ThreadAttachEvent(header, specifics)
         if type_ == 4:
             return ExceptionEvent.from_raw(header, specifics)
+
+        print 'DebugEvent not handled:', type_
+        print `header`, `specifics`
 
         raise NotImplementedError()
 
@@ -152,44 +161,61 @@ class UsbConnection():
     def __init__(self):
         self.lock = threading.Lock()
 
-        self.dev = usb.core.find(idVendor=0x057e, idProduct=0x3000)
-        if self.dev is None:
-            raise Exception('Device not found')
+        if USE_USB:
+            self.dev = usb.core.find(idVendor=0x057e, idProduct=0x3000)
+            if self.dev is None:
+                raise Exception('Device not found')
 
-        self.dev.set_configuration()
-        self.cfg = self.dev.get_active_configuration()
-        self.intf = self.cfg[(0,0)]
+            self.dev.set_configuration()
+            self.cfg = self.dev.get_active_configuration()
+            self.intf = self.cfg[(0,0)]
 
-        self.ep_in = usb.util.find_descriptor(
-            self.intf,
-            custom_match = \
-            lambda e: \
-                usb.util.endpoint_direction(e.bEndpointAddress) == \
-                usb.util.ENDPOINT_IN)
-        assert self.ep_in is not None
+            self.ep_in = usb.util.find_descriptor(
+                self.intf,
+                custom_match = \
+                lambda e: \
+                    usb.util.endpoint_direction(e.bEndpointAddress) == \
+                    usb.util.ENDPOINT_IN)
+            assert self.ep_in is not None
 
-        self.ep_out = usb.util.find_descriptor(
-            self.intf,
-            custom_match = \
-            lambda e: \
-                usb.util.endpoint_direction(e.bEndpointAddress) == \
-                usb.util.ENDPOINT_OUT)
-        assert self.ep_out is not None
+            self.ep_out = usb.util.find_descriptor(
+                self.intf,
+                custom_match = \
+                lambda e: \
+                    usb.util.endpoint_direction(e.bEndpointAddress) == \
+                    usb.util.ENDPOINT_OUT)
+            assert self.ep_out is not None
+        else:
+            serv = socket(AF_INET, SOCK_STREAM)
+            serv.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+            serv.bind(('', 0xdead))
+            serv.listen(1)
+            print 'Waiting for connection'
+            self.sock, client = serv.accept()
+            print 'Got connection'
 
     def read(self, size):
         data = ""
         while size != 0:
-            tmp_data = self.ep_in.read(size)
-            tmp_data = ''.join([chr(x) for x in tmp_data])
+            if USE_USB:
+                tmp_data = self.ep_in.read(size)
+                tmp_data = ''.join([chr(x) for x in tmp_data])
+            else:
+                tmp_data = self.sock.recv(size)
+            #print 'recv debug', len(tmp_data)
             size -= len(tmp_data)
-            data+= tmp_data
+            data += tmp_data
         return data
 
     def write(self, data):
         size = len(data)
-        tmplen = 0;
+        tmplen = 0
         while size != 0:
-            tmplen = self.ep_out.write(data)
+            if USE_USB:
+                tmplen = self.ep_out.write(data)
+            else:
+                tmplen = self.sock.send(data)
+            #print 'send debug', tmplen
             size -= tmplen
             data = data[tmplen:]
 
@@ -339,7 +365,7 @@ class UsbConnection():
         self.checkResult(resp)
         return struct.unpack('<Q', resp['data'])[0]
 
-if 0:
+if __name__=='__main__':
     c = UsbConnection()
     print c.cmdListProcesses()
     h = c.cmdAttachProcess(int(sys.argv[1]))

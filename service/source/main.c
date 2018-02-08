@@ -1,9 +1,40 @@
 // Copyright 2017 plutoo
 #include <switch.h>
 
+//#define USE_USB
+
+#ifdef USE_USB
+
 Result usbCommsInitialize(void);
 size_t usbCommsRead(void* buffer, size_t size);
 size_t usbCommsWrite(const void* buffer, size_t size);
+
+#else
+
+int sock;
+
+size_t usbCommsRead(void* buffer, size_t size) {
+    unsigned char *cbuf = (unsigned char *) buffer;
+    size_t total = 0;
+    while(total < size) {
+        size_t cnt = bsdRecv(sock, cbuf, size - total, 0);
+        total += cnt;
+        cbuf += cnt;
+    }
+    return size;
+}
+size_t usbCommsWrite(const void* buffer, size_t size) {
+    unsigned char *cbuf = (unsigned char *) buffer;
+    size_t total = 0;
+    while(total < size) {
+        size_t cnt = bsdSend(sock, cbuf, size - total, 0);
+        total += cnt;
+        cbuf += cnt;
+    }
+    return size;
+}
+
+#endif
 
 typedef enum {
     REQ_LIST_PROCESSES   =0,
@@ -363,9 +394,26 @@ int main(int argc, char *argv[])
         // Failed to get PM debug interface.
         fatalSimple(222 | (6 << 9));
 
+#ifdef USE_USB
+
     rc = usbCommsInitialize();
     if (rc)
         fatalSimple(rc);
+
+#else
+
+    bsdInitializeDefault();
+    int sock = bsdSocket(BSD_AF_INET, BSD_SOCK_STREAM, BSD_IPPROTO_TCP);
+    struct bsd_sockaddr_in addr;
+    addr.sin_len = sizeof(struct bsd_sockaddr_in);
+    addr.sin_family = BSD_AF_INET;
+    addr.sin_port = 0xADDE;
+    addr.sin_addr = 0x7c01a8c0; //0x2800000A;
+    memset(&addr.sin_zero, 0, 8);
+    bsdConnect(sock, &addr, sizeof(struct bsd_sockaddr_in));
+
+#endif
+
 
     while (handleUsbCommand());
 
