@@ -1,15 +1,8 @@
 // Copyright 2017 plutoo
 #include <switch.h>
-
-//#define USE_USB
-
-#ifdef USE_USB
-
-Result usbCommsInitialize(void);
-size_t usbCommsRead(void* buffer, size_t size);
-size_t usbCommsWrite(const void* buffer, size_t size);
-
-#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 int sock;
 
@@ -17,7 +10,9 @@ size_t usbCommsRead(void* buffer, size_t size) {
     unsigned char *cbuf = (unsigned char *) buffer;
     size_t total = 0;
     while(total < size) {
-        size_t cnt = bsdRecv(sock, cbuf, size - total, 0);
+        size_t cnt = recv(sock, cbuf, size - total, 0);
+        if(cnt <= 0)
+            svcExitProcess();
         total += cnt;
         cbuf += cnt;
     }
@@ -27,14 +22,14 @@ size_t usbCommsWrite(const void* buffer, size_t size) {
     unsigned char *cbuf = (unsigned char *) buffer;
     size_t total = 0;
     while(total < size) {
-        size_t cnt = bsdSend(sock, cbuf, size - total, 0);
+        size_t cnt = send(sock, cbuf, size - total, 0);
+        if(cnt <= 0)
+            svcExitProcess();
         total += cnt;
         cbuf += cnt;
     }
     return size;
 }
-
-#endif
 
 typedef enum {
     REQ_LIST_PROCESSES   =0,
@@ -385,35 +380,51 @@ int handleUsbCommand() {
     return 1;
 }
 
+int logsock;
+void dlog(char *msg) {
+    send(logsock, msg, strlen(msg), 0);
+}
+
 int main(int argc, char *argv[])
 {
     Result rc;
 
+    socketInitializeDefault();
+
+    logsock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    struct sockaddr_in logaddr;
+    logaddr.sin_len = sizeof(struct sockaddr_in);
+    logaddr.sin_family = AF_INET;
+    logaddr.sin_port = htons(0xdead);
+    logaddr.sin_addr.s_addr = inet_addr("10.0.0.40");
+    memset(&logaddr.sin_zero, 0, 8);
+    connect(logsock, (struct sockaddr *) &logaddr, sizeof(struct sockaddr_in));
+
+    dlog("Nxdbg log starting\n");
+
     rc = pmdmntInitialize();
-    if (rc)
-        // Failed to get PM debug interface.
-        fatalSimple(222 | (6 << 9));
+    if(rc) {
+        dlog("Failed to get pm:dmnt\n");
+        return;
+    }
 
-#ifdef USE_USB
-
-    rc = usbCommsInitialize();
-    if (rc)
-        fatalSimple(rc);
-
-#else
-
-    bsdInitializeDefault();
-    int sock = bsdSocket(BSD_AF_INET, BSD_SOCK_STREAM, BSD_IPPROTO_TCP);
-    struct bsd_sockaddr_in addr;
-    addr.sin_len = sizeof(struct bsd_sockaddr_in);
-    addr.sin_family = BSD_AF_INET;
-    addr.sin_port = 0xADDE;
-    addr.sin_addr = 0x7c01a8c0; //0x2800000A;
+    int serv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    struct sockaddr_in addr;
+    addr.sin_len = sizeof(struct sockaddr_in);
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(0xdead);
+    addr.sin_addr.s_addr = INADDR_ANY;
     memset(&addr.sin_zero, 0, 8);
-    bsdConnect(sock, &addr, sizeof(struct bsd_sockaddr_in));
+    dlog("Binding\n");
+    bind(serv, (struct sockaddr *) &addr, sizeof(struct sockaddr_in));
+    dlog("Listening\n");
+    listen(serv, 1);
 
-#endif
-
+    struct sockaddr_in caddr;
+    socklen_t caddrsize;
+    dlog("Waiting for connection\n");
+    sock = accept(serv, (struct sockaddr *) &caddr, &caddrsize);
+    dlog("Got connection!\n");
 
     while (handleUsbCommand());
 

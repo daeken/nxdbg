@@ -6,14 +6,10 @@ class MemoryInfo(object):
 		self.addr, self.size, self.perm, self.type = struct.unpack('<QQII', data)
 
 class Connection(object):
-	def __init__(self, host='', port=0xdead):
-		serv = socket(AF_INET, SOCK_STREAM)
-		serv.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
-		serv.bind(('', 0xdead))
-		serv.listen(1)
-		print 'Waiting for connection on %r:%i' % (host, port)
-		self.sock, client = serv.accept()
-		print 'Got connection'
+	def __init__(self, ip, port):
+		self.sock = socket(AF_INET, SOCK_STREAM)
+		self.sock.connect((ip, port))
+		print 'Connected to %s:%i' % (ip, port)
 
 	def recv(self, count):
 		data = ''
@@ -29,18 +25,14 @@ class Connection(object):
 		while count < len(data):
 			count += self.sock.send(data[count:])
 
-	def sr(self, cmd, format='', *args, throw=True):
+	def sr(self, cmd, format='', *args):
 		self.send(struct.pack('<I' + format, cmd, *args))
-		return self.readresp(throw=throw)
 
-	def readresp(self, throw=True):
 		result, size = struct.unpack('<II', self.recv(8))
 		data = self.recv(size)
-		if result != 0 and throw:
+		if result != 0:
 			raise SwitchException(result)
-		elif throw:
-			return data
-		return result, data
+		return data
 
 	def listProcesses(self):
 		data = self.sr(0)
@@ -86,4 +78,4 @@ class Connection(object):
 		self.sr(12, 'Q', pid)
 
 	def getTitlePid(self, tid):
-		return struct.unpack('<Q', self.sr(13, 'Q', tid))
+		return struct.unpack('<Q', self.sr(13, 'Q', tid))[0]
