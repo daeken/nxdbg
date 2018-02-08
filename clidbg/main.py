@@ -1,5 +1,5 @@
 from cmd import Cmd
-import argparse, sys
+import argparse, sys, time
 try:
 	try:
 		import gnureadline as readline
@@ -8,12 +8,13 @@ try:
 except ImportError:
 	pass
 
-from connection import Connection
+from connection import *
 
 class Clidbg(Cmd):
 	def __init__(self, ip, port):
 		Cmd.__init__(self)
 
+		self.lastEvent = None
 		self.dbg = Connection(ip, port)
 
 	def print_topics(self, header, cmds, cmdlen, maxcol):
@@ -47,11 +48,38 @@ class Clidbg(Cmd):
 			traceback.print_exc()
 		print 'Attached'
 
+	def do_break(self, line=None):
+		print 'Breaking process'
+		self.dbg.breakProcess(self.phandle)
+
+	def do_continue(self, line=None):
+		print 'Continuing...'
+
+		if self.lastEvent is not None and self.lastEvent.flags & 1:
+			try:
+				self.dbg.continueDebugEvent(self.phandle, 7, 0)
+			except SwitchException:
+				pass
+		self.lastEvent = None
+
+		self.dbgone()
+
 	def do_exit(self, line):
 		"""exit
 		Exit the debugger."""
 		print line
 		sys.exit()
+
+	def dbgone(self):
+		while True:
+			try:
+				evt = self.dbg.getDebugEvent(self.phandle)
+				break
+			except SwitchException:
+				pass
+			time.sleep(0.1)
+		print evt
+		self.lastEvent = evt
 
 def main():
 	parser = argparse.ArgumentParser(description='CLI Debugger for Switch')
@@ -67,8 +95,10 @@ def main():
 	cmd = Clidbg(args.ip, args.port)
 	if args.titleid is not None:
 		cmd.do_attachtitle(args.titleid)
+		cmd.do_break()
 	elif args.pid != -1:
 		cmd.do_attach(args.pid)
+		cmd.do_break()
 	while True:
 		try:
 			cmd.cmdloop()
