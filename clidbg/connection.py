@@ -1,5 +1,5 @@
 from socket import *
-import struct
+import struct, sys
 
 class MemoryInfo(object):
 	def __init__(self, data):
@@ -128,13 +128,23 @@ class BadSvcEvent(ExceptionEvent):
 		return 'BadSvcEvent(tid=%i, svc=0x%x)' % (self.tid, self.svc)
 
 class ThreadContext(object):
-	def __init__(self, data):
+	uninit = True
+	def __init__(self, tid, data):
+		if ThreadContext.uninit:
+			for i, name in enumerate(['x%i' % i for i in xrange(31)] + ['sp', 'pc']):
+				setattr(ThreadContext, name,  (lambda i2: property(lambda self: self.registers[i2]))(i))
+			ThreadContext.uninit = False
+		self.tid = tid
 		self.registers = struct.unpack('<' + 'Q' * 33, data[:8 * 33])
 
 class Connection(object):
 	def __init__(self, ip, port):
 		self.sock = socket(AF_INET, SOCK_STREAM)
-		self.sock.connect((ip, port))
+		try:
+			self.sock.connect((ip, port))
+		except error, e:
+			print >>sys.stderr, 'Failed to connect to %s:%i: %s' % (ip, port, str(e))
+			sys.exit(1)
 		print 'Connected to %s:%i' % (ip, port)
 
 	def recv(self, count):
@@ -177,17 +187,20 @@ class Connection(object):
 		return DebugEvent.parse(self.sr(4, 'I', handle))
 
 	def readMemory(self, handle, addr, size):
-		data = ''
-		for i in xrange(0, size, 0x1000):
-			data += self.sr(5, 'IIQ', handle, min(size - len(data), 0x1000), addr + len(data))
-		return data
+		try:
+			data = ''
+			for i in xrange(0, size, 0x1000):
+				data += self.sr(5, 'IIQ', handle, min(size - len(data), 0x1000), addr + len(data))
+			return data
+		except SwitchException:
+			return None
 
 	def continueDebugEvent(self, handle, flags, tid):
 		self.sr(6, 'IIQ', handle, flags, tid)
 
 	def getThreadContext(self, handle, flags, tid):
 		try:
-			return ThreadContext(self.sr(7, 'IIQ', handle, flags, tid))
+			return ThreadContext(tid, self.sr(7, 'IIQ', handle, flags, tid))
 		except SwitchException:
 			return None
 

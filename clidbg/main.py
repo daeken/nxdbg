@@ -1,5 +1,6 @@
 from cmd import Cmd
-import argparse, sys, time
+import argparse, re, sys, time
+from capstone import *
 try:
 	try:
 		import gnureadline as readline
@@ -10,6 +11,12 @@ except ImportError:
 
 from connection import *
 
+class ResolutionException(Exception):
+	pass
+
+EXPR = 'expr'
+PLAIN = 'plain'
+
 class Clidbg(Cmd):
 	def __init__(self, ip, port):
 		Cmd.__init__(self)
@@ -18,10 +25,78 @@ class Clidbg(Cmd):
 		self.context = None
 		self.dbg = Connection(ip, port)
 
+		self.cs = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+
+		self.updatePrompt()
+
+	def resolve(self, expr):
+		if re.search(r'(\[|\.|\'|"|[a-zA-Z0-9_)]\s*\()', expr, re.M):
+			raise ResolutionException('Invalid expression')
+
+		if '$' in expr and self.context is None:
+			raise ResolutionException('No current thread context')
+		expr = re.sub(r'\$([a-zA-Z0-9]+)', lambda x: '(context.%s)' % x.group(1).lower(), expr)
+
+		try:
+			return eval(expr, {}, dict(context=self.context))
+		except:
+			raise ResolutionException('Invalid expression')
+
+	def parseLine(self, line, format, defaults=None):
+		def resolveOne(line):
+			line = line.split(' ')
+			if len(line) == 1:
+				return self.resolve(line[0]), ''
+			expr = ''
+			ops = '+-*/%^&|<>='
+			while len(line):
+				if line[0] == '':
+					line = line[1:]
+					continue
+				expr += ' ' + line[0]
+				temp = line
+				line = line[1:]
+				if (len(temp) == 1 or (len(temp) > 1 and temp[0][-1] not in ops and temp[1][0] not in ops)) and expr.count(')') == expr.count('('):
+					break
+			return self.resolve(expr), ' '.join(line)
+
+		ret = []
+		defaults = () if defaults is None else defaults
+		for elem in format:
+			line = line.strip()
+			if line == '':
+				break
+			if elem == EXPR:
+				elem, line = resolveOne(line)
+			elif elem == PLAIN:
+				sub = line.split(' ', 1)
+				if len(sub) == 1:
+					elem, line = sub[0], ''
+				else:
+					elem, line = sub
+			else:
+				assert False
+			ret.append(elem)
+		if len(ret) < len(format):
+			ret += defaults[len(ret) - len(format):]
+			if len(ret) != len(format):
+				raise ResolutionException('Not enough arguments')
+		return ret
+
+	def updatePrompt(self):
+		if self.context is None:
+			self.prompt = 'nx> '
+		else:
+			self.prompt = '[%i] nx 0x%x> ' % (self.context.tid, self.context.pc)
+
 	def print_topics(self, header, cmds, cmdlen, maxcol):
 		nix = 'EOF', 
 		if header is not None:
 			Cmd.print_topics(self, header, [cmd for cmd in cmds if cmd not in nix], cmdlen, maxcol)
+
+	def postcmd(self, stop, line):
+		self.updatePrompt()
+		return stop
 
 	def do_EOF(self, line):
 		print
@@ -73,7 +148,7 @@ class Clidbg(Cmd):
 
 	def do_registers(self, line):
 		if self.context is None:
-			print 'No active thread context'
+			print 'No current thread context'
 			return
 		for i in xrange(33):
 			if i == 31:
@@ -88,6 +163,87 @@ class Clidbg(Cmd):
 				print
 		if i & 1 == 0:
 			print
+
+	def do_hexdump(self, line):
+		try:
+			addr, size = self.parseLine(line, (EXPR, EXPR), (0x100, ))
+		except ResolutionException, e:
+			print e
+			return
+
+		data = self.dbg.readMemory(self.phandle, addr, size) if size > 0 else ''
+		if data is None:
+			print 'Could not read 0x%x bytes at 0x%x' % (size, addr)
+			return
+
+		maddr = addr + size
+		if maddr > 0x0000FFFFFFFFFFFF:
+			ads = 16
+		elif maddr > 0x00000000FFFFFFFF:
+			ads = 12
+		elif maddr > 0x000000000000FFFF:
+			ads = 8
+		else:
+			ads = 4
+
+		for i in xrange(0, size, 16):
+			print ('%%0%ix |' % ads) % (addr + i), 
+			for j in xrange(16):
+				if i + j < size:
+					print '%02x' % ord(data[i + j]), 
+				else:
+					print '  ', 
+				if j == 7:
+					print '', 
+			print '|', 
+			side = ''
+			for j in xrange(min(16, size - i)):
+				if 0x20 <= ord(data[i + j]) <= 0x7e:
+					side += data[i+j]
+				else:
+					side += '.'
+				if j == 7:
+					side += ' '
+			print side
+		print ('%%0%ix' % ads) % size
+
+	def do_disasm(self, line):
+		try:
+			addr, count = self.parseLine(line, (EXPR, EXPR), (None, 20))
+		except ResolutionException, e:
+			print e
+			return
+		offset = 0
+		if addr is None and self.context is None:
+			print 'No current thread context'
+			return
+		elif addr is None:
+			addr, offset = self.context.pc, -10 * 4
+
+		pc = self.context.pc if self.context is not None else None
+
+		if addr & 3:
+			print 'Address must be aligned'
+			return
+		data = self.dbg.readMemory(self.phandle, addr + offset, count * 4)
+		if data is None and offset != 0:
+			data = self.dbg.readMemory(self.phandle, addr, count * 4)
+			offset = 0
+		if data is None:
+			print 'Could not read %i instructions at 0x%x' % (count, addr)
+			return
+		raddr = addr + offset
+
+		insns = list(self.cs.disasm(data, raddr))
+		maxmnemlen = max(len(insn.mnemonic) for insn in insns)
+		for insn in insns:
+			if insn.address == pc:
+				print '-->', 
+			else:
+				print '   ', 
+			print '0x%x' % insn.address, 
+			print insn.mnemonic + ' ' * (maxmnemlen - len(insn.mnemonic)), 
+			print insn.op_str
 
 	def dbgone(self):
 		while True:
