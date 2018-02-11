@@ -318,18 +318,13 @@ int handleUsbCommand() {
         WriteMemoryReq req_;
         usbCommsRead(&req_, sizeof(req_));
 
-        sendLog("Got writememory request");
-
         static u8 page[0x1000];
         if(req_.Size > 0x1000) {
             sendLog("Overly large request.");
             svcExitProcess();
         }
-        sendLog("Reading data...");
         usbCommsRead(page, req_.Size);
-        sendLog("Writing data...");
         rc = svcWriteDebugProcessMemory(req_.DbgHandle, page, req_.Addr, req_.Size);
-        sendLog("Sending back response");
         resp.Result = rc;
 
         sendUsbResponse(resp);
