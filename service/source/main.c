@@ -41,7 +41,7 @@ typedef enum {
     REQ_CONTINUE_DBGEVENT=6,
     REQ_GET_THREADCONTEXT=7,
     REQ_BREAK_PROCESS    =8,
-    REQ_WRITEMEMORY32    =9,
+    REQ_WRITEMEMORY      =9,
     REQ_LISTENAPPLAUNCH  =10,
     REQ_GETAPPPID        =11,
     REQ_START_PROCESS    =12,
@@ -120,9 +120,9 @@ typedef struct { // Cmd8
 
 typedef struct { // Cmd9
     u32 DbgHandle;
-    u32 Value;
+    u32 Size;
     u64 Addr;
-} WriteMemory32Req;
+} WriteMemoryReq;
 
 typedef struct { // Cmd11
     u64 Pid;
@@ -142,10 +142,18 @@ typedef struct {
 
 
 void sendUsbResponse(DebuggerResponse resp) {
+    usbCommsWrite("RRRR", 4);
     usbCommsWrite((void*)&resp, 8);
 
     if (resp.LenBytes > 0)
         usbCommsWrite(resp.Data, resp.LenBytes);
+}
+
+void sendLog(char *msg) {
+    usbCommsWrite("LLLL", 4);
+    int len = strlen(msg);
+    usbCommsWrite(&len, 4);
+    usbCommsWrite(msg, len);
 }
 
 int handleUsbCommand() {
@@ -306,11 +314,22 @@ int handleUsbCommand() {
         break;
     }
 
-    case REQ_WRITEMEMORY32: { // Cmd9
-        WriteMemory32Req req_;
+    case REQ_WRITEMEMORY: { // Cmd9
+        WriteMemoryReq req_;
         usbCommsRead(&req_, sizeof(req_));
 
-        rc = svcWriteDebugProcessMemory(req_.DbgHandle, (void*)&req_.Value, req_.Addr, 4);
+        sendLog("Got writememory request");
+
+        static u8 page[0x1000];
+        if(req_.Size > 0x1000) {
+            sendLog("Overly large request.");
+            svcExitProcess();
+        }
+        sendLog("Reading data...");
+        usbCommsRead(page, req_.Size);
+        sendLog("Writing data...");
+        rc = svcWriteDebugProcessMemory(req_.DbgHandle, page, req_.Addr, req_.Size);
+        sendLog("Sending back response");
         resp.Result = rc;
 
         sendUsbResponse(resp);
@@ -380,33 +399,15 @@ int handleUsbCommand() {
     return 1;
 }
 
-int logsock;
-void dlog(char *msg) {
-    send(logsock, msg, strlen(msg), 0);
-}
-
 int main(int argc, char *argv[])
 {
     Result rc;
 
     socketInitializeDefault();
 
-    logsock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    struct sockaddr_in logaddr;
-    logaddr.sin_len = sizeof(struct sockaddr_in);
-    logaddr.sin_family = AF_INET;
-    logaddr.sin_port = htons(0xdead);
-    logaddr.sin_addr.s_addr = inet_addr("10.0.0.40");
-    memset(&logaddr.sin_zero, 0, 8);
-    connect(logsock, (struct sockaddr *) &logaddr, sizeof(struct sockaddr_in));
-
-    dlog("Nxdbg log starting\n");
-
     rc = pmdmntInitialize();
-    if(rc) {
-        dlog("Failed to get pm:dmnt\n");
-        return;
-    }
+    if(rc)
+        return 0;
 
     int serv = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     struct sockaddr_in addr;
@@ -415,16 +416,12 @@ int main(int argc, char *argv[])
     addr.sin_port = htons(0xdead);
     addr.sin_addr.s_addr = INADDR_ANY;
     memset(&addr.sin_zero, 0, 8);
-    dlog("Binding\n");
     bind(serv, (struct sockaddr *) &addr, sizeof(struct sockaddr_in));
-    dlog("Listening\n");
     listen(serv, 1);
 
     struct sockaddr_in caddr;
     socklen_t caddrsize;
-    dlog("Waiting for connection\n");
     sock = accept(serv, (struct sockaddr *) &caddr, &caddrsize);
-    dlog("Got connection!\n");
 
     while (handleUsbCommand());
 

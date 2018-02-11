@@ -164,11 +164,17 @@ class Connection(object):
 	def sr(self, cmd, format='', *args):
 		self.send(struct.pack('<I' + format, cmd, *args))
 
-		result, size = struct.unpack('<II', self.recv(8))
-		data = self.recv(size)
-		if result != 0:
-			raise SwitchException(result)
-		return data
+		def rloop():
+			if self.recv(4) == 'LLLL':
+				print 'Log message:', self.recv(struct.unpack('<I', self.recv(4))[0])
+				return rloop()
+
+			result, size = struct.unpack('<II', self.recv(8))
+			data = self.recv(size)
+			if result != 0:
+				raise SwitchException(result)
+			return data
+		return rloop()
 
 	def listProcesses(self):
 		data = self.sr(0)
@@ -190,7 +196,7 @@ class Connection(object):
 		try:
 			data = ''
 			for i in xrange(0, size, 0x1000):
-				data += self.sr(5, 'IIQ', handle, min(size - len(data), 0x1000), addr + len(data))
+				data += self.sr(5, 'IIQ', handle, min(size - i, 0x1000), addr + i)
 			return data
 		except SwitchException:
 			return None
@@ -207,8 +213,15 @@ class Connection(object):
 	def breakProcess(self, handle):
 		self.sr(8, 'I', handle)
 
-	def writeMemory32(self, handle, addr, value):
-		self.sr(9, 'IIQ', handle, value, address)
+	def writeMemory(self, handle, addr, data):
+		size = len(data)
+		try:
+			for i in xrange(0, size, 0x1000):
+				cs = min(size - i, 0x1000)
+				self.sr(9, 'IIQ%is' % cs, handle, cs, addr + i, data[i:i+0x1000])
+		except SwitchException:
+			return False
+		return True
 
 	def waitForAppLaunch(self):
 		self.sr(10)

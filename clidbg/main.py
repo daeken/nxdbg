@@ -23,6 +23,7 @@ class Clidbg(Cmd):
 
 		self.lastEvent = None
 		self.context = None
+		self.swbreakpoints = {}
 		self.dbg = Connection(ip, port)
 
 		self.cs = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
