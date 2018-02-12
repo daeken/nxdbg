@@ -287,6 +287,21 @@ class Clidbg(Cmd):
 		prefix = line.split(' ', 1)[1]
 		return [fn[len(prefix) - len(text):] + ('/' if not fn.endswith('/') and os.path.isdir(fn) else '') for fn in glob.glob(prefix + '*')]
 
+	def do_display(self, line):
+		fmt, addr, count = self.parseLine(line, (PLAIN, EXPR, EXPR), (1, ))
+		try:
+			size = struct.calcsize(fmt)
+		except:
+			print 'Bad format string'
+			return
+		data = self.dbg.readMemory(self.phandle, addr, size * count)
+		if data is None:
+			print 'Could not read 0x%x bytes at 0x%x' % (size * count, addr)
+			return
+		for i in xrange(count):
+			elems = struct.unpack_from('<' + fmt, data, i * size)
+			print '0x%x - %s' % (addr + i * size, ', '.join('0x%x' % x if not (isinstance(x, str) or isinstance(x, unicode)) else `x` for x in elems))
+
 	def dbgone(self):
 		while True:
 			try:
