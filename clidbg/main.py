@@ -16,6 +16,7 @@ class ResolutionException(Exception):
 
 EXPR = 'expr'
 PLAIN = 'plain'
+REST = 'rest'
 
 class Clidbg(Cmd):
 	def __init__(self, ip, port):
@@ -75,6 +76,8 @@ class Clidbg(Cmd):
 					elem, line = sub[0], ''
 				else:
 					elem, line = sub
+			elif elem == REST:
+				elem, line = line, ''
 			else:
 				assert False
 			ret.append(elem)
@@ -245,6 +248,28 @@ class Clidbg(Cmd):
 			print '0x%x' % insn.address, 
 			print insn.mnemonic + ' ' * (maxmnemlen - len(insn.mnemonic)), 
 			print insn.op_str
+
+	def do_write(self, line):
+		addr, data = self.parseLine(line, (EXPR, REST))
+		data = ''.join(chr(int(ch, 16)) for ch in data.split(' '))
+		self.dbg.writeMemory(self.phandle, addr, data)
+
+	def do_stack(self, line):
+		if self.context is None:
+			print 'No current thread context'
+			return
+
+		cur = self.context.x29
+		i = 0
+		while cur != 0:
+			data = self.dbg.readMemory(self.phandle, cur, 16)
+			if data is None:
+				break
+			cur, lr = struct.unpack('<QQ', data)
+			if lr == 0:
+				break
+			print '%i: 0x%x' % (i, lr)
+			i += 1
 
 	def dbgone(self):
 		while True:
