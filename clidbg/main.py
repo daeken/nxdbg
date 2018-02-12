@@ -1,5 +1,5 @@
 from cmd import Cmd
-import argparse, re, sys, time
+import argparse, glob, os.path, re, sys, time
 from capstone import *
 try:
 	try:
@@ -270,6 +270,22 @@ class Clidbg(Cmd):
 				break
 			print '%i: 0x%x' % (i, lr)
 			i += 1
+
+	def do_evalfile(self, line):
+		try:
+			code = file(line.strip(), 'r').read()
+		except IOError:
+			print 'Cannot open file'
+			return
+		try:
+			exec(code, dict(dbg=self.dbg, cli=self))
+		except:
+			import traceback
+			traceback.print_exc()
+
+	def complete_evalfile(self, text, line, begidx, endidx):
+		prefix = line.split(' ', 1)[1]
+		return [fn[len(prefix) - len(text):] + ('/' if not fn.endswith('/') and os.path.isdir(fn) else '') for fn in glob.glob(prefix + '*')]
 
 	def dbgone(self):
 		while True:
